@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>command</key>
+	<string>#!/bin/bash
+
+python -mjson.tool</string>
+	<key>name</key>
+	<string>Prettify JSON</string>
+	<key>outputCaret</key>
+	<string>selectOutput</string>
+	<key>uuid</key>
+	<string>83FA0E1B-881C-4A29-AFF5-334177AC913D</string>
+</dict>
+</plist>

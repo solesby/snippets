@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>command</key>
+	<string>#!/bin/bash
+uuid=`uuidgen| tr '[A-Z]' '[a-z]'`
+echo -n $uuid
+</string>
+	<key>input</key>
+	<string>none</string>
+	<key>keyEquivalent</key>
+	<string>^^</string>
+	<key>name</key>
+	<string>Generate UUID</string>
+	<key>outputLocation</key>
+	<string>atCaret</string>
+	<key>uuid</key>
+	<string>21656FD1-D3B5-4FD5-AC3B-6CB39F78D236</string>
+</dict>
+</plist>
