@@ -15,9 +15,13 @@
  *
  *      {% condition %}
  *         ... block content ...
+ *      {% another_condition %}
+ *         ... block content ...
  *      {% end %}
  *
- *  The parser evaluates the presense (and length if its a string) of an object in the data
+ *  The parser evaluates the {% %} and breaks the template into chunks. {% end %} is optional.
+ *
+ *  The renderer evaluates the presense (and length if its a string) of an object in the data
  *  dictionary with key "condition". If the object exists and has length, then the block is
  *  evaluated. If the object in the dictionary is an array, then the block is evaluated for
  *  every item (dictionary) in the array.
@@ -31,6 +35,27 @@
  *  it looks for the presence of the variable in the data dictionary (or array item
  *  dictionary) and appends the object as a string.
  *
+ *  Multiple variables can be used (for defaults). The first one found will be output:
+ *
+ *      {{ variable1 | variable2 | variable3 | "static text" }}
+ *
+ *  The rendered result of a block can be passed through a "filter" such as:
+ *
+ *      {% condition truncate:15 %}
+ *      {% condition strip %}
+ *      {% condition upper %}
+ *      {% condition lower %}
+ *
+ *  If you load from `templatePath` instead of a string, you can "extend" other templates by
+ *  using the following at the very beginning:
+ *
+ *      {% require another_template.txt %}
+ *
+ *  That will insert the contents of the template specified by `templatePath` into the contents
+ *  of `another_template.txt` by replacing the string:
+ *
+ *      {% insert_required %}
+ *
  */
 
 
@@ -38,14 +63,45 @@
 
 @interface SimpleTemplateRenderer ()
 
+@property (nonatomic,strong) NSString* renderedOutput;
 @property (nonatomic,strong) NSString* template;
+@property (nonatomic,strong) NSString* templatePath;
+@property (nonatomic) BOOL compiled;
 
 @property (nonatomic,strong) NSMutableArray* blocks;
 @property (nonatomic,strong) NSMutableArray* conditions;
+@property (nonatomic,strong) NSMutableArray* filters;
+
 
 @end
 
 @implementation SimpleTemplateRenderer
+
+- (SimpleTemplateRenderer*) initWithTemplatePath:(NSString*)templatePath
+{
+    NSError*  error;
+    NSString* template = [NSString stringWithContentsOfFile:templatePath encoding:NSUTF8StringEncoding error:&error];
+    _templatePath = templatePath;
+
+    // only combine files when using paths
+    if ([template hasPrefix:@"{% require "])
+    {
+        NSString* trimmedTemplate = nil;
+        NSString* requiredFilename = nil;
+        NSScanner* scanner = [[NSScanner alloc] initWithString:template];
+        [scanner scanString:@"{% require " intoString:nil];
+        [scanner scanUpToString:@"%}" intoString:&requiredFilename];
+        [scanner scanString:@"%}" intoString:nil];
+        [scanner scanUpToString:@"ENDOFDOCUMENT" intoString:&trimmedTemplate]; // HACK: how do you scan to end of string?
+        requiredFilename = [requiredFilename stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        
+        NSString* requiredPath = [[templatePath stringByDeletingLastPathComponent] stringByAppendingPathComponent:requiredFilename];
+        NSString* wrapper = [NSString stringWithContentsOfFile:requiredPath encoding:NSUTF8StringEncoding error:&error];
+        template = [wrapper stringByReplacingOccurrencesOfString:@"{% insert_required %}" withString:trimmedTemplate ? trimmedTemplate : @""];
+    }
+    
+    return [self initWithTemplate:template];
+}
 
 - (SimpleTemplateRenderer*) initWithTemplate:(NSString*)template
 {
@@ -55,6 +111,7 @@
         _template = template;
         _blocks = [[NSMutableArray alloc] init];
         _conditions = [[NSMutableArray alloc] init];
+        _filters = [[NSMutableArray alloc] init];
     }
     return self;
 }
@@ -65,31 +122,56 @@
 {
     if (!_template) return;
 
-    NSScanner* scanner = [[NSScanner alloc] initWithString:_template];
+    // first remove comments
+    NSString* template = [_template stringByReplacingOccurrencesOfString:@"\\{#.*?#\\}" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, _template.length)];
+    
+    // process special tags
+    template = [template stringByReplacingOccurrencesOfString:@"\\{% *now *%\\}"
+                   withString:[[NSDate date] description] options:NSRegularExpressionSearch range:NSMakeRange(0, template.length)];
+    
+    NSScanner* scanner = [[NSScanner alloc] initWithString:template];
     [scanner setCharactersToBeSkipped:nil]; // default is to skip whitespace which would require content between blocks
 
     NSString* block = nil;
     NSString* cond = nil;
+    NSString* filter = nil;
     
-    [_conditions addObject:@""]; // first block can't have a condition
-    
-    while([scanner scanUpToString:@"{%" intoString:&block])
+    while(![scanner isAtEnd])
     {
-        [_blocks addObject:[NSString stringWithString:block]];
+        // scan block contents if cond was previously captured set it
+        [scanner scanUpToString:@"{%" intoString:&block];
         
-        if([scanner isAtEnd]) break; // finished processing
+        if (block && block.length)
+        {
+            [_blocks     addObject: block  ? [NSString stringWithString:block]  : @""];
+            [_conditions addObject: cond   ? [NSString stringWithString:cond]   : @""];
+            [_filters    addObject: filter ? [NSString stringWithString:filter] : @""];
+        }
+        
+        // reset
+        block  = nil;
+        cond   = nil;
+        filter = nil;
 
-        cond = nil;
-        
+        // check for condition on next block
         [scanner scanString:@"{%"     intoString:nil];
         [scanner scanUpToString:@"%}" intoString:&cond];
         [scanner scanString:@"%}"     intoString:nil];
         
         cond = [cond stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         if ([cond isEqualToString:@"end"]) cond = nil;
-        
-        [_conditions addObject: cond ? [NSString stringWithString:cond] : @"" ];
+        else
+        {
+            NSArray* parts = [cond componentsSeparatedByString:@" "];
+            if (parts.count==2)
+            {
+                cond = parts[0];
+                filter = parts[1];
+            }
+        }
     }
+    
+    _compiled = YES;
 
     //NSLog(@"Found %d(%d) blocks: %@", _blocks.count, _conditions.count, _conditions);
 }
@@ -98,13 +180,23 @@
 
 - (NSString*) renderFromMap:(NSDictionary*)map
 {
-    NSMutableString* buffer = [NSMutableString new];
+    return [self renderFromMap:map trimWhitespace:NO];
+}
+
+- (NSString*) renderFromMap:(NSDictionary*)map trimWhitespace:(BOOL)trimWhitespace
+{
+    if (!_compiled) [self compile];
+    
+    NSMutableString* output = [NSMutableString new];
 
     for( NSUInteger i = 0; i < _blocks.count; i++ )
     {
         NSString* block = _blocks[i];
         NSString* cond = _conditions[i];
+        NSString* filter = _filters[i];
         //NSLog(@"cond:%@ block:%@", cond, block);
+        
+        NSMutableString* buffer = [NSMutableString new];
         
         if (cond && cond.length)
         {
@@ -120,7 +212,7 @@
             }
 
             // if key matches a string, then the string must have a length
-            else if ([obj isKindOfClass:[NSArray class]])
+            else if ([obj isKindOfClass:[NSString class]])
             {
                 if ([(NSString*) obj length])
                     [buffer appendString: [SimpleTemplateRenderer stringWithTemplate:block fromMap:map] ];
@@ -135,19 +227,44 @@
         else
             [buffer appendString: [SimpleTemplateRenderer stringWithTemplate:block fromMap:map] ];
 
-        
+        // now process block filters
+        if ([filter hasPrefix:@"truncate:"])
+        {
+            NSInteger length = [[[filter componentsSeparatedByString:@":"] objectAtIndex:1] integerValue];
+            if (length && buffer.length > length)
+            {
+                buffer = [NSMutableString stringWithFormat:@"%@…", [buffer substringToIndex:length-1]];
+            }
+        }
+        else if ([filter isEqualToString:@"upper"]) { buffer = [[buffer uppercaseString] mutableCopy]; }
+        else if ([filter isEqualToString:@"lower"]) { buffer = [[buffer lowercaseString] mutableCopy]; }
+        else if ([filter isEqualToString:@"strip"]) {
+            buffer = [[buffer stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]] mutableCopy]; }
+
+        // finally append block result to template output
+        [output appendString:buffer];
     }
+
+    if (trimWhitespace)
+        _renderedOutput = [output stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    else
+        _renderedOutput = [NSString stringWithString:output];
+
+
+#if SIMPLETEMLPATE_SAVE_OUTPUT
     
-    return [NSString stringWithString:buffer];
+    NSString *debugFilename = _templatePath ? [_templatePath lastPathComponent] : @"debug.txt";
+    NSString *debugFilepath = [[NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) objectAtIndex:0]stringByAppendingPathComponent:[NSString stringWithFormat:@"STDEBUG_%@", debugFilename] ];
+    NSLog(@"## SimpleTemplate Debug: %@", debugFilepath);
+    [_renderedOutput writeToFile:debugFilepath  atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    
+#endif
+
+    return _renderedOutput;
 }
 
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-+ (NSString*) stringWithTemplate:(NSString*)template fromMap:(NSDictionary*)map
-{
-    return [SimpleTemplateRenderer stringWithTemplate:template fromMap:map preserveWhitespace:YES];
-}
 
 + (NSString*) htmlFromAttributedString:(NSString*)string
 {
@@ -166,39 +283,76 @@
     }
     return string;
 }
+
++ (NSString*) stringWithTemplate:(NSString*)template fromMap:(NSDictionary*)map
+{
+    return [SimpleTemplateRenderer stringWithTemplate:template fromMap:map preserveWhitespace:YES];
+}
 + (NSString*) stringWithTemplate:(NSString*)template fromMap:(NSDictionary*)map preserveWhitespace:(BOOL)preserveWhitespace
 {
+    return [SimpleTemplateRenderer stringWithTemplate:template fromMap:map preserveWhitespace:YES start:nil end:nil];
+}
++ (NSString*) stringWithTemplate:(NSString*)template fromMap:(NSDictionary*)map preserveWhitespace:(BOOL)preserveWhitespace start:(NSString*)start end:(NSString*)end
+{
+    if (start==nil) { start = @"{{"; end = @"}}"; }
     NSMutableString* buffer = [NSMutableString new];
     NSScanner* scanner = [[NSScanner alloc] initWithString:template];
     if (preserveWhitespace) [scanner setCharactersToBeSkipped:nil];
     
     NSString* chunkToOutput = nil;
     
-    while([scanner scanUpToString:@"{{" intoString:&chunkToOutput])
+    NSDateFormatter *dateFormatter = [[NSDateFormatter alloc] init];
+    [dateFormatter setDateFormat:@"MMMM dd, yyyy HH:mm"];
+    NSString *dateFormat = [map objectForKey:@"_dateFormat"];
+    if (dateFormat) [dateFormatter setDateFormat:dateFormat];
+    
+    while(![scanner isAtEnd])
     {
-        NSString* key = nil;
-        NSString* value = nil;
+        NSString* keyString = nil;
+        id value = nil;
         
-        [buffer appendString:chunkToOutput];
+        [scanner scanUpToString:start intoString:&chunkToOutput];
+        if (chunkToOutput) [buffer appendString:chunkToOutput];
+        chunkToOutput = nil;
         
         if([scanner isAtEnd]) break; // finished processing
         
-        [scanner scanString:@"{{"     intoString:nil];
-        [scanner scanUpToString:@"}}" intoString:&key];
-        [scanner scanString:@"}}"     intoString:nil];
+        [scanner scanString:start   intoString:nil];
+        [scanner scanUpToString:end intoString:&keyString];
+        [scanner scanString:end     intoString:nil];
         
-        if(key)
+        if(keyString)
         {
-            key = [key stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            value = [map objectForKey:key];
+            NSString* key;
+            for (key in [keyString componentsSeparatedByString:@"|"])
+            {
+                key = [key stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                if (!key.length) continue;
+                
+                if ([key hasPrefix:@"\""])
+                {
+                    [buffer appendString:[key stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\""]]];
+                    break;
+                }
+
+                value = [map objectForKey:key];
+
+                if ([value isKindOfClass:[NSDate class]])
+                    value = [dateFormatter stringFromDate:(NSDate*)value];
+
+                if([value isKindOfClass:[NSString class]] && [value length])
+                {
+                    // TODO: [buffer appendString:[self htmlFromAttributedString:value]];
+                    [buffer appendString:value];
+
+                    break; // once we've output something stop checking variables
+                }
+            }
         }
-        
-        // if(value) [buffer appendString:[self htmlFromAttributedString:value]];
-        if(value) [buffer appendString:value];
-        else      [buffer appendFormat:@"{{%@}}", key];
     }
     
     return [NSString stringWithString:buffer];
 }
+
 
 @end
