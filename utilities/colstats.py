@@ -14,6 +14,7 @@
 ## -o  output the first row for every key
 
 ### Options
+## -v      only output values
 ## -s      sort keys
 ## -c      comma as delimiter
 ## -t      tab as delimiter
@@ -42,12 +43,14 @@ def process(args):
     opts_header   = True
     opts_index    = 0
     opts_sort     = False
+    opts_values   = False
     opts_delim    = '\t'
 
     ## Process command line options
     files = [ o for o in args if not o.startswith('-')]
     opts  = ''.join([ o for o in args if o.startswith('-') ]).replace('-','')
     if 'H' in opts: opts_header   = True ## default: no header
+    if 'v' in opts: opts_values   = True ## default: include counts
     if 's' in opts: opts_sort     = True ## default: not sorted
     if 'c' in opts: opts_delim    = ','  ## default: tab '\t'
     if 'u' in opts: action_unique = True ## output unique counts
@@ -127,7 +130,10 @@ def process(args):
         for k in uniques:
             if action_dupes and counts[k] == 1: continue
             # log( k, counts[k], first[k], last[k] )
-            output_cols( k, counts[k] )
+            if opts_values:
+                output(k)
+            else:
+                output_cols( k, counts[k] )
 
     else: ## default show stats
         output('Statistics')
