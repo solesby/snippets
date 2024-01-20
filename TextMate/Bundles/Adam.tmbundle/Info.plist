@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>contactEmailRot13</key>
+	<string>nqnz@fbyrfol.pbz</string>
+	<key>contactName</key>
+	<string>Adam Solesby</string>
+	<key>description</key>
+	<string>Adams TextMate Stuff
+https://github.com/solesby/</string>
+	<key>name</key>
+	<string>Adam</string>
+	<key>source</key>
+	<dict>
+		<key>method</key>
+		<string>git</string>
+		<key>url</key>
+		<string>git@github.com:solesby/snippets.git/TextMate/Bundles/Adam.tmbundle</string>
+	</dict>
+	<key>uuid</key>
+	<string>DB4BFA07-F4D2-44C7-9576-D3593EC916CE</string>
+</dict>
+</plist>
